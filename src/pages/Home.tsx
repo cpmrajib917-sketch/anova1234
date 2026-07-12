@@ -195,10 +195,12 @@ export function Home() {
 
   // Infinite Catalog States
   const [catalogItems, setCatalogItems] = useState<Anime[]>([]);
-  const [catalogPage, setCatalogPage] = useState(1);
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [hasMoreCatalog, setHasMoreCatalog] = useState(true);
-  const [catalogShownIds, setCatalogShownIds] = useState<Set<string>>(new Set());
+
+  const catalogPageRef = useRef(1);
+  const isFetchingRef = useRef(false);
+  const catalogShownIdsRef = useRef<Set<string>>(new Set());
 
   const sentinelRef = useRef<HTMLDivElement>(null);
 
@@ -253,35 +255,36 @@ export function Home() {
 
   // 2. Main Explore Paginated Catalog Fetcher (Load More / Infinite Scroll)
   const loadNextCatalogPage = async () => {
-    if (catalogLoading || !hasMoreCatalog) return;
+    if (isFetchingRef.current || !hasMoreCatalog) return;
+    isFetchingRef.current = true;
     setCatalogLoading(true);
+    
+    const pageToFetch = catalogPageRef.current;
     try {
       // api.search handles page 1 containing pinned/manual anime first, then API anime
       // and page 2+ containing only the API results with full duplicate prevention!
-      const res = await api.search('', catalogPage);
+      const res = await api.search('', pageToFetch);
       if (res && res.data) {
         const mapped = res.data.map(mapAnime);
         
         // Prevent duplicate cards globally in the bottom catalog
         const uniqueIncoming = mapped.filter((item: Anime) => {
           const idStr = String(item.id);
-          if (catalogShownIds.has(idStr)) return false;
+          if (catalogShownIdsRef.current.has(idStr)) return false;
           return true;
         });
 
         if (uniqueIncoming.length > 0) {
+          // Synchronously record these IDs immediately to prevent any race condition from overlapping triggers
+          uniqueIncoming.forEach((x: Anime) => catalogShownIdsRef.current.add(String(x.id)));
+          
           setCatalogItems(prev => [...prev, ...uniqueIncoming]);
-          setCatalogShownIds(prev => {
-            const next = new Set(prev);
-            uniqueIncoming.forEach((x: Anime) => next.add(String(x.id)));
-            return next;
-          });
-          setCatalogPage(p => p + 1);
+          catalogPageRef.current = pageToFetch + 1;
         } else if (mapped.length === 0) {
           setHasMoreCatalog(false);
         } else {
           // If every item returned was a duplicate, increment page and continue trying once automatically
-          setCatalogPage(p => p + 1);
+          catalogPageRef.current = pageToFetch + 1;
         }
 
         if (res.page >= res.pages || mapped.length === 0) {
@@ -293,14 +296,10 @@ export function Home() {
     } catch (e) {
       console.error("Failed to fetch next catalog page:", e);
     } finally {
+      isFetchingRef.current = false;
       setCatalogLoading(false);
     }
   };
-
-  // Fetch Page 1 of the explore catalog on mount
-  useEffect(() => {
-    loadNextCatalogPage();
-  }, []);
 
   // Trigger Infinite scroll when sentinel in view
   useEffect(() => {
@@ -308,14 +307,14 @@ export function Home() {
     if (!sentinel) return;
 
     const observer = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && !catalogLoading && hasMoreCatalog) {
+      if (entries[0].isIntersecting && !isFetchingRef.current && hasMoreCatalog) {
         loadNextCatalogPage();
       }
     }, { rootMargin: '400px' });
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [catalogLoading, hasMoreCatalog, catalogPage]);
+  }, [hasMoreCatalog]);
 
   if (loading && trending.length === 0) {
     return (

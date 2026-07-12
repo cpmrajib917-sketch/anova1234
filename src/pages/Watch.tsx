@@ -306,6 +306,12 @@ export function Watch() {
 
   // Native player state only; no fake loading overlays or automatic server switching.
   const [isIframeLoading, setIsIframeLoading] = useState(false);
+  const iframeRef = React.useRef<HTMLIFrameElement>(null);
+  const isIframeLoadingRef = React.useRef(false);
+
+  React.useEffect(() => {
+    isIframeLoadingRef.current = isIframeLoading;
+  }, [isIframeLoading]);
 
   // Dailymotion UI Mask System setup
   const playerContainerRef = React.useRef<HTMLDivElement>(null);
@@ -551,7 +557,7 @@ export function Watch() {
     if (userHasStartedPlayback && playerUrl && !isCustomEpisode) {
       setIsIframeLoading(true);
       timer = setTimeout(() => {
-        if (isIframeLoading) {
+        if (isIframeLoadingRef.current) {
           console.warn(`[Failover] Server ${server.toUpperCase()} exceeded 8 second load threshold. Swapping server...`);
           triggerAutoFallback();
         }
@@ -560,7 +566,7 @@ export function Watch() {
     return () => {
       if (timer) clearTimeout(timer);
     };
-  }, [playerUrl, userHasStartedPlayback, server, isIframeLoading]);
+  }, [playerUrl, userHasStartedPlayback, server]);
 
   // Dynamic Event-Driven Player Integrations (Auto-Next & Auto-Failover via postMessage)
   useEffect(() => {
@@ -568,6 +574,11 @@ export function Watch() {
       try {
         const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
         if (!data) return;
+        
+        // Ensure the postMessage originates from our active player iframe to avoid ad/popunder conflict issues
+        if (iframeRef.current && e.source && e.source !== iframeRef.current.contentWindow) {
+          return;
+        }
         
         // 1. Intercept video ended events
         if (data.event === 'ended' || data.type === 'ended' || data.event === 'video_ended') {
@@ -959,6 +970,7 @@ export function Watch() {
           activeCustomSource.type === 'embed' || isDailymotionVideo ? (
             <div ref={playerContainerRef} className="w-full h-full relative">
               <iframe 
+                ref={iframeRef}
                 key={`${episode}-${selectedLanguage}-${customPlayerUrl}`}
                 src={customPlayerUrl || null} 
                 title={`${activeAnime.title} Episode ${episode}`}
@@ -1048,6 +1060,7 @@ export function Watch() {
           </div>
         ) : (
           <iframe 
+            ref={iframeRef}
             key={`${episode}-${server}-${audio}`}
             src={playerUrl} 
             allowFullScreen 
